@@ -1,0 +1,20 @@
+datasource db {
+  provider = "sqlite"
+  // url      = "file:D:/www/wwwroot/TechTOnions_Bot/Backend V2/database/BOT.sqlite"
+  url      = "file:D:/pratyanj laptop/python/TechTOnions_API/auth system/BOT.sqlite"
+}
+// generator
+generator client {
+  provider             = "prisma-client-py"
+  recursive_type_depth = 5
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
