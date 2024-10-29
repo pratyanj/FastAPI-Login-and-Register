@@ -41,7 +41,7 @@ app.add_middleware(
 )
 
 # JWT Settings
-SECRET_KEY = "your-secret-key-here"
+SECRET_KEY = "pratyanj"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
