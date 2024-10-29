@@ -1,15 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
-from prisma import Prisma
 from datetime import datetime, timedelta
+from jose import jwt, JWTError
 from passlib.context import CryptContext
-from models import UserCreate, User
-
-router = APIRouter(
-    prefix="/auth",
-    tags=["Authentication"]
-)
+from fastapi import HTTPException, status, Depends,APIRouter
+from prisma import Prisma
+from fastapi.security import OAuth2PasswordBearer
+from models import UserCreate
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
 # JWT Settings
 SECRET_KEY = "your-secret-key-here"
@@ -17,20 +13,30 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Password hashing
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=12
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+prisma = Prisma()
+
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+router = APIRouter(
+    prefix="/auth",
+    tags=["Authentication"]
 )
 
-prisma = Prisma()
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+from passlib.context import CryptContext
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__rounds=12  # You can adjust the rounds for security/performance balance
+)
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
-
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -38,9 +44,9 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-@router.post("/register")
+@router.post("/register", tags=["Authentication"])
 async def register(user: UserCreate):
     if user.password != user.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords don't match")
@@ -55,9 +61,12 @@ async def register(user: UserCreate):
         })
         return {"message": "User created successfully"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Username or email already exists: {str(e)}"
+        )
 
-@router.post("/login")
+@router.post("/login", tags=["Authentication"])
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     user = await prisma.user.find_first(
         where={
@@ -75,27 +84,8 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/logout")
-async def logout(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, 
-                detail="Invalid token"
-            )
-        return {
-            "message": "Successfully logged out",
-            "status": "success"
-        }
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials"
-        )
-
-@router.get("/me")
+# Protected route example
+@router.get("/me", tags=["Authentication"])
 async def read_users_me(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -110,8 +100,30 @@ async def read_users_me(token: str = Depends(oauth2_scheme)):
             'username': username
         }
     )
-    
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
     return {"username": user.username, "email": user.email}
+
+
+@router.post("/logout", tags=["Authentication"])
+async def logout(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, 
+                detail="Invalid token"
+            )
+        
+        # Since JWT is stateless, we'll return a success message
+        # For enhanced security, you could implement a token blacklist
+        return {
+            "message": "Successfully logged out",
+        }
+        
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials"
+        )
