@@ -17,7 +17,9 @@ from urllib.parse import urlparse
 import os
 from prisma import Prisma
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 
+load_dotenv()
 prisma = Prisma()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,7 +43,7 @@ app.add_middleware(
 )
 
 # JWT Settings
-SECRET_KEY = "pratyanj"
+SECRET_KEY = os.getenv("SECRET_KEY", "a-very-long-random-string-for-security")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -113,8 +115,13 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     return {"access_token": access_token, "token_type": "bearer"}
 
 # Protected route example
-@app.get("/me", tags=["Authentication"])
-async def read_users_me(token: str = Depends(oauth2_scheme)):
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    # Check if token is blacklisted
+    blacklisted = await prisma.blacklistedtoken.find_unique(where={"token": token})
+    if blacklisted:
+        raise HTTPException(status_code=401, detail="Token has been invalidated")
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
@@ -123,15 +130,14 @@ async def read_users_me(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
     
-    user = await prisma.user.find_first(
-        where={
-            'username': username
-        }
-    )
+    user = await prisma.user.find_first(where={"username": username})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return {"username": user.username, "email": user.email}
+    return user
 
+@app.get("/me", tags=["Authentication"])
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return {"username": current_user.username, "email": current_user.email}
 
 @app.post("/logout", tags=["Authentication"])
 async def logout(token: str = Depends(oauth2_scheme)):
@@ -144,12 +150,18 @@ async def logout(token: str = Depends(oauth2_scheme)):
                 detail="Invalid token"
             )
         
-        # Since JWT is stateless, we'll return a success message
-        # For enhanced security, you could implement a token blacklist
-        return {
-            "message": "Successfully logged out",
-        }
+        # Get token expiration from payload
+        expires_at = datetime.utcfromtimestamp(payload.get("exp"))
         
+        # Add token to blacklist
+        await prisma.blacklistedtoken.create({
+            "data": {
+                "token": token,
+                "expiresAt": expires_at
+            }
+        })
+        
+        return {"message": "Successfully logged out"}
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -157,7 +169,7 @@ async def logout(token: str = Depends(oauth2_scheme)):
         )
 if __name__ == "__main__":
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=8080,
         reload=True,
